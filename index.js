@@ -22,6 +22,23 @@ const MENU_ITEMS = {
 
 const WHATSAPP_URL = `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`;
 
+// ✅ Add GET route for webhook verification
+app.get('/webhook', (req, res) => {
+    const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode && token === VERIFY_TOKEN) {
+        console.log("✅ Webhook verified successfully!");
+        res.status(200).send(challenge);
+    } else {
+        console.error("❌ Webhook verification failed. Invalid token.");
+        res.sendStatus(403);
+    }
+});
+
 async function sendMessage(to, message, buttons = []) {
     try {
         let payload = {
@@ -181,4 +198,3 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 WhatsApp bot running on port ${PORT}`));
-
