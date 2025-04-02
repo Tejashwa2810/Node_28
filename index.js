@@ -77,9 +77,8 @@ app.post('/webhook', async (req, res) => {
             for (const message of messages) {
                 const from = message.from;
                 const text = message.text?.body?.toLowerCase().trim();
-                const buttonId = message.interactive?.button_reply?.id; // 🔥 Handle button clicks properly
-
-                const userInput = buttonId || text; // If button was clicked, use its ID instead
+                const buttonId = message.interactive?.button_reply?.id; // 🔥 Handle button clicks
+                const userInput = buttonId || text; // Use button ID if clicked
 
                 if (!usersSession[from]) {
                     usersSession[from] = { stage: "greeting", order: [] };
@@ -87,12 +86,74 @@ app.post('/webhook', async (req, res) => {
                     continue;
                 }
 
+                // STEP 1: Show Menu (Users Click to Choose Items)
                 if (userInput === "menu") {
-                    usersSession[from].stage = "ordering";
-                    await sendMessage(from, getMenuMessage(), ["Add to Cart", "View Cart"]);
+                    usersSession[from].stage = "choosing_item";
+                    const menuButtons = Object.keys(MENU_ITEMS).map(id => ({
+                        id: `item_${id}`,
+                        title: MENU_ITEMS[id].name
+                    }));
+                    await sendMessage(from, "🍽️ Choose an item:", menuButtons);
                     continue;
                 }
 
+                // STEP 2: User Chooses an Item, Show Variations
+                if (userInput.startsWith("item_")) {
+                    const itemId = userInput.split("_")[1]; // Extract item ID
+                    if (MENU_ITEMS[itemId]) {
+                        usersSession[from].selectedItem = itemId;
+                        usersSession[from].stage = "choosing_variation";
+
+                        const variations = Object.keys(MENU_ITEMS[itemId].variations).map(variation => ({
+                            id: `variation_${variation}`,
+                            title: variation
+                        }));
+                        await sendMessage(from, `🛒 Choose a variation for *${MENU_ITEMS[itemId].name}*:`, variations);
+                    } else {
+                        await sendMessage(from, "❌ Invalid selection. Please choose again.");
+                    }
+                    continue;
+                }
+
+                // STEP 3: User Chooses a Variation, Ask for Quantity
+                if (userInput.startsWith("variation_")) {
+                    const variation = userInput.split("_")[1]; // Extract variation
+                    const itemId = usersSession[from].selectedItem;
+
+                    if (MENU_ITEMS[itemId] && MENU_ITEMS[itemId].variations[variation]) {
+                        usersSession[from].selectedVariation = variation;
+                        usersSession[from].stage = "choosing_quantity";
+
+                        await sendMessage(from, "🔢 Enter quantity (e.g., 2 for 2 pieces)");
+                    } else {
+                        await sendMessage(from, "❌ Invalid variation. Please select again.");
+                    }
+                    continue;
+                }
+
+                // STEP 4: User Enters Quantity, Add to Cart
+                if (usersSession[from].stage === "choosing_quantity" && !isNaN(userInput)) {
+                    const quantity = parseInt(userInput);
+                    const itemId = usersSession[from].selectedItem;
+                    const variation = usersSession[from].selectedVariation;
+                    const price = MENU_ITEMS[itemId].variations[variation];
+
+                    usersSession[from].order.push({
+                        name: MENU_ITEMS[itemId].name,
+                        variation,
+                        price,
+                        quantity
+                    });
+
+                    usersSession[from].stage = "ordering"; // Reset to ordering stage
+                    delete usersSession[from].selectedItem;
+                    delete usersSession[from].selectedVariation;
+
+                    await sendMessage(from, `✅ Added ${quantity}x ${MENU_ITEMS[itemId].name} (${variation}) to cart.`, ["View Cart", "Checkout"]);
+                    continue;
+                }
+
+                // View Cart
                 if (userInput === "cart") {
                     let cartMessage = "🛒 *Your Cart:*\n";
                     let total = 0;
@@ -105,6 +166,7 @@ app.post('/webhook', async (req, res) => {
                     continue;
                 }
 
+                // Checkout
                 if (userInput === "checkout") {
                     if (usersSession[from].order.length === 0) {
                         await sendMessage(from, "🛒 Your cart is empty!");
@@ -121,28 +183,14 @@ app.post('/webhook', async (req, res) => {
                     continue;
                 }
 
+                // Confirm Order
                 if (userInput === "confirm") {
                     orders[from] = usersSession[from].order;
                     adminOrders.push({ user: from, order: usersSession[from].order });
 
                     loyaltyPoints[from] = (loyaltyPoints[from] || 0) + 10; 
-                    await sendMessage(from, "🎉 Order confirmed! You earned *10 loyalty points*! We’ll notify you when it’s ready. 🍽️", ["Track Order"]);
+                    await sendMessage(from, "🎉 Order confirmed! You earned *10 loyalty points*! 🍽️", ["Track Order"]);
                     delete usersSession[from];
-                    continue;
-                }
-
-                if (userInput === "track order") {
-                    if (orders[from]) {
-                        await sendMessage(from, "🚚 Your order is being prepared! 🍽️ Estimated time: 20 min.");
-                    } else {
-                        await sendMessage(from, "❌ No active orders found.");
-                    }
-                    continue;
-                }
-
-                if (userInput === "loyalty points") {
-                    let points = loyaltyPoints[from] || 0;
-                    await sendMessage(from, `🏆 *Your Loyalty Points:* ${points} points!`, ["Menu", "Cart"]);
                     continue;
                 }
 
@@ -152,6 +200,7 @@ app.post('/webhook', async (req, res) => {
     }
     res.sendStatus(200);
 });
+
 
 
 app.listen(3001, () => console.log("🚀 WhatsApp bot running on port 3001"));
