@@ -179,4 +179,6 @@ app.post('/webhook', async (req, res) => {
     res.sendStatus(200);
 });
 
-app.listen(3001, () => console.log("🚀 WhatsApp bot running on port 3001"));
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 WhatsApp bot running on port ${PORT}`));
+
