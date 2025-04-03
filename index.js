@@ -24,10 +24,9 @@ const WHATSAPP_URL = `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBE
 // ✅ Webhook Verification
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === process.env.VERIFY_TOKEN) {
-        res.status(200).send(req.query['hub.challenge']);
-    } else {
-        res.sendStatus(403);
+        return res.status(200).send(req.query['hub.challenge']);
     }
+    res.sendStatus(403);
 });
 
 // ✅ Send WhatsApp Message
@@ -35,23 +34,33 @@ async function sendMessage(to, text, buttons = []) {
     try {
         const payload = {
             messaging_product: "whatsapp",
+            recipient_type: "individual",
             to,
             type: buttons.length > 0 ? "interactive" : "text",
             ...(buttons.length > 0 ? {
                 interactive: {
                     type: "button",
                     body: { text },
-                    action: { buttons: buttons.map(b => ({ type: "reply", reply: { id: b.id, title: b.title } })) }
+                    action: {
+                        buttons: buttons.map(b => ({
+                            type: "reply",
+                            reply: { id: b.id, title: b.title }
+                        }))
+                    }
                 }
             } : { text: { body: text } })
         };
 
-        await axios.post(WHATSAPP_URL, payload, {
+        console.log("📤 Sending message:", JSON.stringify(payload, null, 2));
+
+        const response = await axios.post(WHATSAPP_URL, payload, {
             headers: {
                 Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
                 "Content-Type": "application/json"
             }
         });
+
+        console.log("✅ Message sent successfully:", response.data);
     } catch (error) {
         console.error("❌ Error sending message:", error.response?.data || error.message);
     }
@@ -59,12 +68,23 @@ async function sendMessage(to, text, buttons = []) {
 
 // ✅ Handle Incoming Messages
 app.post('/webhook', async (req, res) => {
+    console.log("📩 Incoming Webhook Payload:", JSON.stringify(req.body, null, 2));
+
     const messages = req.body?.entry?.[0]?.changes?.[0]?.value?.messages;
     if (messages) {
         for (const message of messages) {
             const from = message.from;
-            const userInput = message.interactive?.button_reply?.id || message.text?.body?.toLowerCase().trim();
+            let userInput = "";
             
+            if (message.interactive && message.interactive.button_reply) {
+                userInput = message.interactive.button_reply.id;
+            } else if (message.text) {
+                userInput = message.text.body.toLowerCase().trim();
+            } else {
+                console.log("⚠️ Unrecognized message format");
+                return;
+            }
+
             console.log(`📩 Received: ${userInput} from ${from}`);
 
             if (!usersSession[from]) {
@@ -77,6 +97,7 @@ app.post('/webhook', async (req, res) => {
             }
 
             if (userInput === "menu") {
+                console.log("🛒 Menu button clicked - Sending menu items...");
                 await sendMessage(from, "🌟 Select an item:", Object.keys(MENU_ITEMS).map(key => ({
                     id: key, title: MENU_ITEMS[key].name
                 })));
@@ -85,16 +106,18 @@ app.post('/webhook', async (req, res) => {
 
             if (MENU_ITEMS[userInput]) {
                 usersSession[from].selectedItem = userInput;
-                await sendMessage(from, `🛒 Choose variation for ${MENU_ITEMS[userInput].name}:`, Object.entries(MENU_ITEMS[userInput].variations).map(([varName, price]) => ({
-                    id: `variation_${varName}`, title: `${varName} - ₹${price}`
-                })));
+                await sendMessage(from, `🛒 Choose variation for ${MENU_ITEMS[userInput].name}:`, 
+                    Object.entries(MENU_ITEMS[userInput].variations).map(([varName, price]) => ({
+                        id: `variation_${varName}`, title: `${varName} - ₹${price}`
+                    }))
+                );
                 continue;
             }
 
             if (userInput.startsWith("variation_")) {
                 const variation = userInput.replace("variation_", "");
                 const item = usersSession[from].selectedItem;
-                if (MENU_ITEMS[item].variations[variation]) {
+                if (MENU_ITEMS[item]?.variations[variation]) {
                     usersSession[from].selectedVariation = variation;
                     await sendMessage(from, "🔢 Enter quantity (e.g., 2)");
                 } else {
