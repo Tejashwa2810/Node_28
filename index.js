@@ -22,7 +22,7 @@ const MENU_ITEMS = {
 
 const WHATSAPP_URL = `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`;
 
-// ✅ Add GET route for webhook verification
+// ✅ GET route for webhook verification
 app.get('/webhook', (req, res) => {
     const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
@@ -45,13 +45,15 @@ async function sendMessage(to, message, buttons = []) {
             messaging_product: "whatsapp",
             to,
             type: buttons.length > 0 ? "interactive" : "text",
-            interactive: buttons.length > 0
+            ...(buttons.length > 0
                 ? {
-                    type: "button",
-                    body: { text: message },
-                    action: { buttons: buttons.map(label => ({ type: "reply", reply: { id: label.toLowerCase(), title: label } })) }
+                    interactive: {
+                        type: "button",
+                        body: { text: message },
+                        action: { buttons: buttons.map(label => ({ type: "reply", reply: { id: label.toLowerCase().replace(/\s/g, "_"), title: label } })) }
+                    }
                 }
-                : { text: message }
+                : { text: { body: message } })
         };
 
         await axios.post(WHATSAPP_URL, payload, {
@@ -79,19 +81,25 @@ app.post('/webhook', async (req, res) => {
 
                 console.log(`📩 Received message: ${userInput} from ${from}`);
 
+                if (userInput === "reset") {
+                    delete usersSession[from];
+                    await sendMessage(from, "🔄 Order reset. Starting fresh!", ["Menu", "Cart", "Loyalty Points"]);
+                    continue;
+                }
+
                 if (!usersSession[from]) {
                     usersSession[from] = { stage: "greeting", order: [] };
-                    await sendMessage(from, "🌟 Welcome to Puchka Das! 🌟", ["Menu", "Cart", "Loyalty Points"]);
+                    await sendMessage(from, "🌟 Welcome to Puchka Das! 🌟", ["Menu", "Cart", "Loyalty Points", "Reset"]);
                     continue;
                 }
 
                 if (userInput === "menu") {
                     usersSession[from].stage = "choosing_item";
-                    const menuButtons = Object.keys(MENU_ITEMS).map(id => ({
+                    const menuButtons = Object.entries(MENU_ITEMS).map(([id, item]) => ({
                         id: `item_${id}`,
-                        title: MENU_ITEMS[id].name
+                        title: item.name
                     }));
-                    await sendMessage(from, "🍽️ Choose an item:", menuButtons);
+                    await sendMessage(from, "🍽️ Choose an item:", [...menuButtons, { id: "reset", title: "Reset" }]);
                     continue;
                 }
 
@@ -101,11 +109,11 @@ app.post('/webhook', async (req, res) => {
                         usersSession[from].selectedItem = itemId;
                         usersSession[from].stage = "choosing_variation";
 
-                        const variations = Object.keys(MENU_ITEMS[itemId].variations).map(variation => ({
+                        const variations = Object.entries(MENU_ITEMS[itemId].variations).map(([variation, price]) => ({
                             id: `variation_${variation}`,
-                            title: variation
+                            title: `${variation} - ₹${price}`
                         }));
-                        await sendMessage(from, `🛒 Choose a variation for *${MENU_ITEMS[itemId].name}*:`, variations);
+                        await sendMessage(from, `🛒 Choose a variation for *${MENU_ITEMS[itemId].name}*:`, [...variations, { id: "reset", title: "Reset" }]);
                     } else {
                         await sendMessage(from, "❌ Invalid selection. Please choose again.");
                     }
@@ -144,7 +152,7 @@ app.post('/webhook', async (req, res) => {
                         delete usersSession[from].selectedItem;
                         delete usersSession[from].selectedVariation;
 
-                        await sendMessage(from, `✅ Added ${quantity}x ${MENU_ITEMS[itemId].name} (${variation}) to cart.`, ["View Cart", "Checkout"]);
+                        await sendMessage(from, `✅ Added ${quantity}x ${MENU_ITEMS[itemId].name} (${variation}) to cart.`, ["View Cart", "Checkout", "Reset"]);
                     } else {
                         await sendMessage(from, "❌ Invalid quantity. Please enter a number.");
                     }
@@ -159,7 +167,7 @@ app.post('/webhook', async (req, res) => {
                         total += item.price * item.quantity;
                     });
                     cartMessage += `\n💰 *Total: ₹${total}*`;
-                    await sendMessage(from, cartMessage, ["Confirm Order", "Modify Order"]);
+                    await sendMessage(from, cartMessage, ["Confirm Order", "Modify Order", "Reset"]);
                     continue;
                 }
 
@@ -175,7 +183,7 @@ app.post('/webhook', async (req, res) => {
                         totalAmount += item.price * item.quantity;
                     });
                     summary += `\n💰 *Total: ₹${totalAmount}*\n✅ Confirm order?`;
-                    await sendMessage(from, summary, ["Confirm", "Cancel"]);
+                    await sendMessage(from, summary, ["Confirm", "Cancel", "Reset"]);
                     continue;
                 }
 
@@ -184,12 +192,12 @@ app.post('/webhook', async (req, res) => {
                     adminOrders.push({ user: from, order: usersSession[from].order });
 
                     loyaltyPoints[from] = (loyaltyPoints[from] || 0) + 10; 
-                    await sendMessage(from, "🎉 Order confirmed! You earned *10 loyalty points*! 🍽️", ["Track Order"]);
+                    await sendMessage(from, "🎉 Order confirmed! You earned *10 loyalty points*! 🍽️", ["Track Order", "Reset"]);
                     delete usersSession[from];
                     continue;
                 }
 
-                await sendMessage(from, "🤖 I didn't understand. Type *menu* to see options.", ["Menu", "Cart"]);
+                await sendMessage(from, "🤖 I didn't understand. Type *menu* to see options.", ["Menu", "Cart", "Reset"]);
             }
         }
     }
