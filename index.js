@@ -9,8 +9,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const usersSession = {};
-const orders = {};
-const loyaltyPoints = {};
+const WHATSAPP_URL = `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`;
 
 const MENU_ITEMS = {
     "pani_puri": { name: "Pani Puri", variations: { small: 20, large: 35 } },
@@ -18,8 +17,6 @@ const MENU_ITEMS = {
     "sev_puri": { name: "Sev Puri", variations: { regular: 25, extra_cheese: 30 } },
     "dahi_puri": { name: "Dahi Puri", variations: { regular: 35, extra_dahi: 40 } }
 };
-
-const WHATSAPP_URL = `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`;
 
 // ✅ Webhook Verification
 app.get('/webhook', (req, res) => {
@@ -29,9 +26,16 @@ app.get('/webhook', (req, res) => {
     res.sendStatus(403);
 });
 
-// ✅ Send WhatsApp Message
+// ✅ Send WhatsApp Message (Fix: Split buttons into multiple messages if needed)
 async function sendMessage(to, text, buttons = []) {
     try {
+        if (buttons.length > 3) {
+            console.log("⚠️ Too many buttons! Splitting into multiple messages.");
+            await sendMessage(to, text, buttons.slice(0, 3)); // Send first 3 buttons
+            await sendMessage(to, "➡️ More options:", buttons.slice(3)); // Send remaining buttons
+            return;
+        }
+
         const payload = {
             messaging_product: "whatsapp",
             recipient_type: "individual",
