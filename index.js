@@ -32,6 +32,13 @@ app.get('/webhook', (req, res) => {
 // ✅ Send WhatsApp Message
 async function sendMessage(to, text, buttons = []) {
     try {
+        if (buttons.length > 3) {
+            console.log("⚠️ Too many buttons! Splitting into multiple messages.");
+            await sendMessage(to, text, buttons.slice(0, 3)); // Send first 3 buttons
+            await sendMessage(to, "➡️ More options:", buttons.slice(3)); // Send remaining buttons
+            return;
+        }
+
         const payload = {
             messaging_product: "whatsapp",
             recipient_type: "individual",
@@ -98,19 +105,23 @@ app.post('/webhook', async (req, res) => {
 
             if (userInput === "menu") {
                 console.log("🛒 Menu button clicked - Sending menu items...");
-                await sendMessage(from, "🌟 Select an item:", Object.keys(MENU_ITEMS).map(key => ({
+                
+                // ✅ Fix: Limit menu items to 3 per message
+                const menuButtons = Object.keys(MENU_ITEMS).map(key => ({
                     id: key, title: MENU_ITEMS[key].name
-                })));
+                }));
+
+                await sendMessage(from, "🌟 Select an item:", menuButtons);
                 continue;
             }
 
             if (MENU_ITEMS[userInput]) {
                 usersSession[from].selectedItem = userInput;
-                await sendMessage(from, `🛒 Choose variation for ${MENU_ITEMS[userInput].name}:`, 
-                    Object.entries(MENU_ITEMS[userInput].variations).map(([varName, price]) => ({
-                        id: `variation_${varName}`, title: `${varName} - ₹${price}`
-                    }))
-                );
+                const variations = Object.entries(MENU_ITEMS[userInput].variations).map(([varName, price]) => ({
+                    id: `variation_${varName}`, title: `${varName} - ₹${price}`
+                }));
+
+                await sendMessage(from, `🛒 Choose variation for ${MENU_ITEMS[userInput].name}:`, variations);
                 continue;
             }
 
