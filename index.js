@@ -32,13 +32,6 @@ app.get('/webhook', (req, res) => {
 // ✅ Send WhatsApp Message
 async function sendMessage(to, text, buttons = []) {
     try {
-        if (buttons.length > 3) {
-            console.log("⚠️ Too many buttons! Splitting into multiple messages.");
-            await sendMessage(to, text, buttons.slice(0, 3)); // Send first 3 buttons
-            await sendMessage(to, "➡️ More options:", buttons.slice(3)); // Send remaining buttons
-            return;
-        }
-
         const payload = {
             messaging_product: "whatsapp",
             recipient_type: "individual",
@@ -59,15 +52,12 @@ async function sendMessage(to, text, buttons = []) {
         };
 
         console.log("📤 Sending message:", JSON.stringify(payload, null, 2));
-
-        const response = await axios.post(WHATSAPP_URL, payload, {
+        await axios.post(WHATSAPP_URL, payload, {
             headers: {
                 Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
                 "Content-Type": "application/json"
             }
         });
-
-        console.log("✅ Message sent successfully:", response.data);
     } catch (error) {
         console.error("❌ Error sending message:", error.response?.data || error.message);
     }
@@ -75,42 +65,27 @@ async function sendMessage(to, text, buttons = []) {
 
 // ✅ Handle Incoming Messages
 app.post('/webhook', async (req, res) => {
-    console.log("📩 Incoming Webhook Payload:", JSON.stringify(req.body, null, 2));
-
     const messages = req.body?.entry?.[0]?.changes?.[0]?.value?.messages;
     if (messages) {
         for (const message of messages) {
             const from = message.from;
-            let userInput = "";
-            
-            if (message.interactive && message.interactive.button_reply) {
-                userInput = message.interactive.button_reply.id;
-            } else if (message.text) {
-                userInput = message.text.body.toLowerCase().trim();
-            } else {
-                console.log("⚠️ Unrecognized message format");
-                return;
-            }
-
-            console.log(`📩 Received: ${userInput} from ${from}`);
+            let userInput = message.text ? message.text.body.toLowerCase().trim() :
+                (message.interactive?.button_reply?.id || "");
 
             if (!usersSession[from]) {
-                usersSession[from] = { stage: "start", order: [] };
+                usersSession[from] = { order: [] };
                 await sendMessage(from, "🍽️ Welcome to Puchka Das!", [
                     { id: "menu", title: "Menu" },
-                    { id: "cart", title: "View Cart" }
+                    { id: "cart", title: "View Cart" },
+                    { id: "reset", title: "Reset" }
                 ]);
                 continue;
             }
 
             if (userInput === "menu") {
-                console.log("🛒 Menu button clicked - Sending menu items...");
-                
-                // ✅ Fix: Limit menu items to 3 per message
                 const menuButtons = Object.keys(MENU_ITEMS).map(key => ({
                     id: key, title: MENU_ITEMS[key].name
                 }));
-
                 await sendMessage(from, "🌟 Select an item:", menuButtons);
                 continue;
             }
@@ -120,7 +95,6 @@ app.post('/webhook', async (req, res) => {
                 const variations = Object.entries(MENU_ITEMS[userInput].variations).map(([varName, price]) => ({
                     id: `variation_${varName}`, title: `${varName} - ₹${price}`
                 }));
-
                 await sendMessage(from, `🛒 Choose variation for ${MENU_ITEMS[userInput].name}:`, variations);
                 continue;
             }
@@ -162,17 +136,29 @@ app.post('/webhook', async (req, res) => {
                     total += item.price * item.quantity;
                 });
                 cartMessage += usersSession[from].order.length > 0 ? `\n💰 *Total: ₹${total}*` : "";
-                await sendMessage(from, cartMessage, [{ id: "checkout", title: "Checkout" }]);
+                await sendMessage(from, cartMessage, [
+                    { id: "menu", title: "Menu" },
+                    { id: "checkout", title: "Checkout" },
+                    { id: "reset", title: "Reset" }
+                ]);
                 continue;
             }
 
             if (userInput === "checkout") {
-                await sendMessage(from, "🎉 Order confirmed! Thank you for shopping!", [{ id: "reset", title: "Start Over" }]);
+                await sendMessage(from, "🎉 Order confirmed! Thank you for shopping!", [
+                    { id: "reset", title: "Start Over" }
+                ]);
                 delete usersSession[from];
                 continue;
             }
 
-            await sendMessage(from, "🤖 Invalid input. Try again.");
+            if (userInput === "reset") {
+                delete usersSession[from];
+                await sendMessage(from, "🔄 Session reset. You can start a new order.", [
+                    { id: "menu", title: "Menu" }
+                ]);
+                continue;
+            }
         }
     }
     res.sendStatus(200);
